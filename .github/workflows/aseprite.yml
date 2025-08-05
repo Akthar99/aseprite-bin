@@ -1,4 +1,3 @@
-
 name: aseprite
 
 on:
@@ -10,22 +9,60 @@ on:
 
 jobs:
   build:
-    runs-on: windows-2022
-    steps:
+    runs-on: ubuntu-latest
 
+    steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-      - name: Build
+      - name: Install Dependencies
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            libpixman-1-dev libfreetype6-dev libharfbuzz-dev zlib1g-dev \
+            libx11-dev libxcursor-dev libxi-dev libgl1-mesa-dev libfontconfig1-dev
+
+      - name: Install Skia
+        shell: bash
+        run: |
+          skia_url=$(source ./laf/misc/skia-url.sh | xargs)
+          skia_file=$(basename $skia_url)
+          curl --ssl-revoke-best-effort -L -o "$skia_file" "$skia_url"
+          unzip "$skia_file" -d skia
+
+      - name: Install Ninja
+        uses: aseprite/get-ninja@main
+
+      - name: Setup CCache
+        uses: hendrikmuhs/ccache-action@v1.2.17
+        with:
+          key: linux-relwithdebinfo-gui-lua
+
+      - name: Configure & Build
         id: build
-        shell: cmd
-        run: call build.cmd
-        env:
-          ASEPRITE_VERSION: ${{ github.event.inputs.version }}
+        shell: bash
+        run: |
+          export enable_ccache=on
+          export laf_backend=skia
+          export enable_scripting=on
+          export skia_arch=x64
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DENABLE_TESTS=ON \
+            -DENABLE_SCRIPTING=$enable_scripting \
+            -DENABLE_CCACHE=$enable_ccache \
+            -DLAF_BACKEND=$laf_backend \
+            -DSKIA_DIR=$(realpath skia) \
+            -DSKIA_LIBRARY_DIR=$(realpath skia/out/Release-$skia_arch)
+          cmake --build build
+          echo "ASEPRITE_VERSION=${{ github.event.inputs.version || 'latest' }}" >> $GITHUB_OUTPUT
 
       - name: Archive
         uses: actions/upload-artifact@v4
         with:
           name: aseprite-${{ steps.build.outputs.ASEPRITE_VERSION }}
-          path: github
+          path: build/bin
           if-no-files-found: error
